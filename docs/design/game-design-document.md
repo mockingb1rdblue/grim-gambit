@@ -292,23 +292,40 @@ Each facility has upgrade tiers (I–III) that enhance its output.
 ### 6.4 Operative Progression
 
 **Experience Points (XP)**
-- Earned per mission: for kills, objectives completed, mission success
+- Earned per mission: 1 XP per kill, 1 XP per objective, 2 XP per mission success
 - Level thresholds: 0 / 3 / 6 / 10 / 15 XP
 
-**Battle Honours** (gained on level up — choose 1 of 2 random options)
-- Stat improvements (+1 Move, +1 APL, -1 to SV, etc.)
-- Special abilities (unique attack modifiers, ploy access, etc.)
-- Proficiencies (additional weapon or equipment types)
+**Battle Honours** (gained on level up — draw 2 from faction pool + 2 from universal pool, player chooses 1)
+- Stat improvements: +1 Move, +1 APL (capped at 4), -1 SV, +1 Wounds
+- Ability unlocks: re-roll one attack die, ignore cover once per activation, +1 Atk on one weapon
+- Design note: binary choice per rank (mirroring XCOM's two-option ability selection) creates build differentiation
 
-**Battle Scars** (chance when incapacitated in battle)
-- Roll on scar table: stat penalties (-1 Move, -1 APL, etc.)
-- Scars can be treated in Apothecarion (costs Requisition + time)
-- Permanent scars possible after multiple injuries to same operative
+**Battle Scars** (D6 roll when incapacitated in battle)
 
-**Injury / Recovery**
-- Operatives incapacitated in battle are injured and miss the next N missions (N = wound deficit / severity)
-- Apothecarion reduces recovery time
-- Critical injuries (0 wounds from a single hit of Critical damage threshold) can be permanent
+| D6 | Result |
+|----|--------|
+| 1-2 | Full Recovery — no lasting effect |
+| 3-4 | Minor Scar — -1 to one stat; removable by Apothecarion (1 Requisition) |
+| 5 | Major Scar — -1 to one stat; permanent cosmetic; Apothecarion cannot remove |
+| 6 | Critical Injury — Major Scar + operative misses 2 missions |
+
+**Injury Tiers (Critically Wounded System)**
+
+The "critically wounded" tier prevents catastrophic single-mission roster wipeouts:
+
+| Severity | Cause | Recovery |
+|----------|-------|----------|
+| Light Wound | Lost <25% wounds | Auto-recover next mission (2h real-time in async) |
+| Injured | Lost 25-75% wounds, incapacitated | Miss 1 mission (6h real-time) |
+| Critical | Incapacitated by crits / single-hit threshold | Miss 2 missions, roll Battle Scar (24h real-time) |
+| Dead | Already critically wounded, incapacitated again | Permanent death — removed from roster |
+
+This creates XCOM's essential roster-pressure loop: best operatives get injured → must field less-experienced operatives → creates new attachment → Apothecarion investment decisions become meaningful.
+
+**Apothecarion Facility Effects**:
+- Tier I: Reduce recovery time by 1 mission
+- Tier II: Reduce recovery time by 2 missions
+- Tier III: Immediate recovery (1 mission minimum) + -1 to Battle Scar D6 roll
 
 ### 6.5 Strategic Map (Globe/Region)
 
@@ -383,23 +400,43 @@ Each faction has a **behavior archetype** that biases AI decisions:
 Client A ──→ Cloudflare Worker ──→ GameSession DO
 Client B ──→ Cloudflare Worker ──→ GameSession DO
                                          │
-                                  SQLite game log
-                                  WebSocket broadcast
+                                  SQLite game log (event sourced)
+                                  WebSocket broadcast (hibernation API)
 ```
 
 **GameSession Durable Object**:
 - Maintains authoritative `GameState` in SQLite
+- **WebSocket Hibernation API**: DO hibernates when no messages are flowing → zero billing during inactive async turns
 - Receives player actions as messages; validates against rules engine
 - Broadcasts state updates to all connected clients
-- Handles reconnection (clients can rejoin a session mid-game)
-- Session persists for 48h after last action (handles async play)
+- Handles reconnection (clients can rejoin a session mid-game; full state sent on reconnect)
+- Session persists for 48h after last action (alarm-based cleanup)
+- **Single-threaded DO execution**: no race conditions on game state updates, no mutex needed
+
+**Why this scales**:
+- WebSocket latency: 45ms average (vs 300ms HTTP polling)
+- 40% bandwidth reduction vs polling
+- One DO per game room → effectively unlimited concurrent rooms (each sharded independently)
+- Comparable to Cloudflare's Doom multiplayer implementation (Workers + DOs)
+
+**State Sync Model (Recommended: Event Sourcing)**:
+- Every player action = immutable event appended to `action_log`
+- Campaign state reconstructable by replaying event log from any checkpoint
+- Aligns with bifrost-bridge's `annals-of-ankou` event store pattern
+- Enables replay, async PvP, save/load without per-frame snapshots
 
 ### 8.2 Async Multiplayer
 
 For **async PvP** (players don't need to be online simultaneously):
 - Each player's turn is submitted as an action batch
 - Push notification (browser native notification API) on opponent's turn
-- Full state reconstruction on reconnect from action log
+- Full state reconstruction on reconnect from event log replay
+- **Turn timeout enforcement**: DO Alarm fires if player hasn't acted within N seconds; auto-pass or forfeit-turn
+
+**Injury Recovery as Real-Time Async Mechanic**:
+- Injured operatives have a recovery time in **real-world hours** (not in-game time)
+- This creates the same XCOM roster-pressure loop in async games: your best operative gets wounded and is genuinely unavailable for the next session
+- Recovery time: Light=2h, Injured=6h, Critical=24h (reduced by Apothecarion tier)
 
 ### 8.3 Lobby System
 
@@ -623,7 +660,90 @@ EPIC: Foundation
 
 ---
 
-## 12. Naming Conventions
+## 12. Kill Team Faction Roster (Q4 2025 Meta)
+
+Full faction data sourced from wahapedia.ru. Competitive tier rankings from Can You Roll A Crit Q4 2025.
+
+### Imperium
+
+| Kill Team | Tier | Playstyle | Notes |
+|-----------|------|-----------|-------|
+| Angels of Death | B | Versatile Marines; Fight or Shoot twice per activation | Chapter Tactics customization |
+| Battleclade | C | Adeptus Mechanicus; defensive posture, tech-acquisition | Struggles against aggressive teams |
+| Celestian Insidiants | — | Adepta Sororitas anti-sorcery specialists | 2025 release |
+| Death Korps | C | Astra Militarum horde; heavy firepower | Rotating to Classified (2021 team) |
+| Deathwatch | S | Xenos-hunters; over-tuned operatives, special ammunition | Strongest team Q4 2025 |
+| Elucidian Starstriders | D | Rogue Trader crew; mixed specialist composition | Cannot deal with melee teams |
+| Exaction Squad | B | Adeptus Arbites; double ammunition mechanic | 2025 release |
+| Hunter Clade | A | Adeptus Mechanicus infiltrators; strong combos | Rotated out of Classified events |
+| Imperial Navy Breachers | B | Void-boarding; exceptional durability, limited damage | Great tanks |
+| Inquisitorial Agents | A | Cross-faction; "Absolute Authority" shutdown mechanic | Dropped from S |
+| Kasrkin | D | Elite Cadian special forces | Needs rules rewrite |
+| Novitiates | C | Adepta Sororitas; glass cannon with flamers + melee | Rotating to Classified (2021 team) |
+| Phobos Strike Team | B | Stealthy Space Marines; shooting and zoning | |
+| Ratlings | B | Sniper specialists; "Scarper" buffs improved mobility | |
+| Sanctifiers | A | Faith-based combat pilgrims; powerful aura-stacking | Dropped from S |
+| Scout Squad | C | Young Space Marine trainees | Power-crept by Wolf Scouts |
+| Tempestus Aquilons | A | Elite storm troopers; 11 operatives, high mobility+firepower | Persistent meta threat |
+| Veteran Guardsmen | B | Battle-hardened Astra Militarum; 14 operatives, Ancillary Support | 2021 team; strong shooters, weak melee |
+| Wolf Scouts | S | Space Wolves; storm abilities give -1 to enemy attacks | S Tier Q4 2025 |
+
+### Chaos
+
+| Kill Team | Tier | Playstyle |
+|-----------|------|-----------|
+| Blooded | B | Corrupted Astra Militarum; balanced horde. Rotating to Classified |
+| Chaos Cult | A | Dark Gods zealots; mutations, melee-focused ramping push. Dangerous TP3/4 |
+| Fellgor Ravagers | A | Mutant beastmen; Frenzy ability gives aggression bonus (moved from B) |
+| Gellerpox Infected | C | Techno-organic plague spreaders; Rust Emanations. Nerfed hard |
+| Goremongers | A | Khorne cyborgs; best dedicated melee team |
+| Legionaries | B | Ancient CSM; Marks of Chaos specializations. 4APL Tzeentch nerf hurt |
+| Murderwing | — | Sadistic killers. 2025 release |
+| Nemesis Claw | A | Night Lords terror; powerful operatives + tools |
+| Plague Marines | B | Death Guard; static threat, resilient |
+| Warp Coven | C | Thousand Sons sorcery; 5-operative elite casters. Over-nerfed |
+
+### Aeldari
+
+| Kill Team | Tier | Playstyle |
+|-----------|------|-----------|
+| Blades of Khaine | A | Craftworld elite; Aspect Abilities for flexibility |
+| Corsair Voidscarred | A | Pirates; 2x Piercing 2 weapons + mobility. Rotating to Classified |
+| Hand of the Archon | B | Drukhari assassin-thieves; lots of re-rolls |
+| Mandrakes | A | Shadow-dwelling Drukhari killers; benefits from Approved Ops 2025 |
+| Void-Dancer Troupe | B | Harlequins; fragile but explosive. Dropped from A |
+
+### Tyranids / GSC
+
+| Kill Team | Tier | Playstyle |
+|-----------|------|-----------|
+| Brood Brothers | A | Hybrid cult; Magus leader is one of best leaders in game |
+| Raveners | A | Hyperadapted predators; constant healing + Dominate ability |
+| Wyrmblade | B | Infiltrator ambush specialists; strong shooting threat |
+
+### Other Factions
+
+| Kill Team | Tier | Faction | Playstyle |
+|-----------|------|---------|-----------|
+| Canoptek Circle | S | Necrons | Dimensional Isolator = strongest shooting in game |
+| Hierotek Circle | B | Necrons | Dynasty sorcerers; powerful shooting and zoning |
+| Kommandos | A | Orks | Stealth cunning; Nob with Big Choppa. Rotating 2021 |
+| Wrecka Krew | A | Orks | Explosive demolition; +1 APL on charge |
+| Farstalker Kinband | C | T'au | Kroot scouts; strong Crit/Tac Op generation |
+| Pathfinders | D | T'au | Advanced recon. Never recovered from nerfs |
+| Vespid Stingwings | C | T'au | Swift aerial strikers; map-dependent |
+| XV26 Stealth Battlesuits | B | T'au | Infiltration mechs; strong vs elites, weak vs hordes |
+| Hearthkyn Salvagers | B | Leagues of Votann | Void-wreck explorers |
+| Hernkyn Yaegirs | B | Leagues of Votann | Pioneer scouts; CP-intensive |
+
+### Rotation System (2024+)
+
+Teams are "Classified" (competitive-legal) for ~4 seasons (~4 years). Original 2021 teams rotating to Legends:
+Kommandos, Death Korps, Novitiates, Pathfinders, Legionaries, Corsair Voidscarred, Blooded
+
+---
+
+## 13. Naming Conventions
 
 Following bifrost project conventions adapted for Grim Gambit:
 
