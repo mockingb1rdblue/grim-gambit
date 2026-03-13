@@ -1,0 +1,13 @@
+{
+  "name": "monorepo-root",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  }
+}
